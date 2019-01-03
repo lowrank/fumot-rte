@@ -16,37 +16,41 @@
 
 clear;clc;
 
-boundary = @(x,y,v) (1);
+boundary = @(x,y,v) (1+cos(4*pi*x)*cos(4*pi*y));
 
 sigma = struct(...
     'xs', @(x) (2 + 0.2 * x(1, :)),...
     'xa', @(x) (0.2 + 0.02 * x(2, :)) , ...
     'xf', @(x) (1.0 + 0.5 * x(1, :)));
-gamma = struct('x', 0.3, 'f', 0.7);
+gamma = struct('x', 1, 'f', 1);
 
-opt = struct('anisotropy', 0, 'angle', 64, ...
-    'nodes', [0 0; 1 0; 1 1; 0 1]', 'minArea', 0.0002,...
+opt = struct('anisotropy', 0.5, 'angle', 16, ...
+    'nodes', [0 0; 1 0; 1 1; 0 1]', 'minArea', 0.0001,...
     'sigma', sigma, 'boundary', boundary, 'gamma', gamma);
 
 % construct FUMOT instance.
 ft = FUMOT(opt);
 
 % initialize fluorescent coefficient at excitation wavelength.
-XF =  ones(1, ft.RTE.nPoint); % row vec.
+XF =  zeros(1, ft.RTE.nPoint); % row vec.
 
 % internal data from excitation stage.
 
-H = ft.ExciteForwardOp(ft.sigma.xf);
+[H, psi] = ft.ExciteForwardOp(ft.sigma.xf);
+
+% induction step 1.
+[~, psi0] =  ft.ExciteForwardOp(XF);
 
 
-
-
-for i = 1:100
-    [H0, psi0] = ft.ExciteForwardOp(XF);
-
-    disp(norm(H - H0));
-    
+% inductions
+for i = 1:10
     XF = H ./(opt.gamma.f * psi0);
+    [H0, psi0] = ft.ExciteForwardOp(XF);
+    disp(norm(H - H0));
+    if ~all(H > H0)
+        error('scheme not monotone.');
+    end
+        
     
 end
 
