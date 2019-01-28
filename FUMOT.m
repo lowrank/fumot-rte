@@ -7,6 +7,7 @@ classdef FUMOT < handle
         gamma
         boundary
         H
+        S
         model
         
         beta
@@ -52,14 +53,15 @@ classdef FUMOT < handle
                 obj.h        = opt.h; % for emission.
             end            
             
-            obj.beta = 1e-3;
+            obj.beta = opt.beta;
             tau = opt.tau;
             
-            [obj.H, ~] = obj.ExciteForwardOp(obj.sigma.xf);
+            [obj.H, Up] = obj.ExciteForwardOp(obj.sigma.xf);
+            obj.S = obj.EmissionForwardOp(obj.sigma.eta, obj.sigma.xf, Up);
             
             % polution
             obj.H =  obj.H .* (1 + tau * (2 * rand(size(obj.H)) - 1));
-            
+            obj.S =  obj.S .* (1 + tau * (2 * rand(size(obj.S)) - 1));
             % edges idx
             obj.edge = unique(obj.RTE.segms);
         end
@@ -99,7 +101,6 @@ classdef FUMOT < handle
         end
        
         function [f, g] = ExciteBackwardOp(obj, XF)
-            
             % LOAD INTO CLASS, then it is OK to stop at anytime.
             obj.curXF = XF;
             
@@ -148,7 +149,7 @@ classdef FUMOT < handle
 %             [xf,fval,exitflag,output] = fminunc(@obj.ExciteBackwardOp, XF,options);
 
 
-            options    = struct( 'factr', 1e0, 'pgtol', 1e-7, 'm', 20, ...
+            options    = struct( 'factr', 1e0, 'pgtol', 1e-9, 'm', 20, ...
                 'x0',XF, 'maxIts', 300, 'maxTotalIts', 800);
             
             options.printEvery     = 1;            
@@ -159,26 +160,66 @@ classdef FUMOT < handle
         end
         
         
-        function [S, wp, phi] = EmissionForwardOp(obj, ETA, H)
+        function [S] = EmissionForwardOp(obj, ETA, XF, Up)
             % solve interior source problem instead.
-             obj.RTE.setBoundaryCondition(obj.h);
-             sigmaMT = obj.sigma.ma + obj.sigma.ms; ...
-             sigmaS   = obj.sigma.ms;
+            tic;
 
-             obj.RTE.sigmaT = sigmaMT;
-             obj.RTE.sigmaS = sigmaS;
+            obj.RTE.setBoundaryCondition(obj.h);
+            sigmaMT = obj.sigma.ma + obj.sigma.ms; 
+            sigmaMS   = obj.sigma.ms;
+            sigmaXTF = obj.sigma.xa + XF + obj.sigma.xs;
+            sigmaS   = obj.sigma.xs;
+            obj.RTE.sigmaT = sigmaMT;
+            obj.RTE.sigmaS = sigmaMS;
 
-             nAngle = obj.RTE.nAngle;
-             
-             Wn = obj.RTE.ForwardSolve(); 
-             Wp = [Un(nAngle/2+1:end, :) ; Un(1:nAngle/2, :)]; % aux function.
-             
-             
-             
-             
-            
+            nAngle = obj.RTE.nAngle;
+
+            Wn = obj.RTE.ForwardSolve(); 
+            Wp = [Wn(nAngle/2+1:end, :) ; Wn(1:nAngle/2, :)]; % aux function.
+
+
+            % solve for w
+            IU = sum(Up, 1)/nAngle;
+            R  = ETA .* XF .* IU; % ROW
+            Z  = repmat(R, obj.RTE.nAngle, 1);
+
+            Y = reshape(  obj.RTE.rays.interior_transport(...
+            obj.RTE.nodes, obj.RTE.elems, obj.RTE.sigmaT,  Z), obj.RTE.nAngle * obj.RTE.nPoint, 1);
+
+            forwardMap = @(X) (X - obj.RTE.mapping(reshape(X, obj.RTE.nAngle, obj.RTE.nPoint))  );
+            [wn, ~] = gmres(forwardMap, Y, 10, 1e-12, 400); 
+            wn = reshape(wn, obj.RTE.nAngle, obj.RTE.nPoint);
+            wp = [wn(nAngle/2+1:end, :) ; wn(1:nAngle/2, :)]; % flip           
+
+            IW = sum(Wp, 1)/nAngle;
+            %              
+            R  = ETA .* XF .* IW; % ROW
+            Z  = repmat(R, obj.RTE.nAngle, 1);
+            Y = reshape(  obj.RTE.rays.interior_transport(...
+            obj.RTE.nodes, obj.RTE.elems, obj.RTE.sigmaT,  Z), obj.RTE.nAngle * obj.RTE.nPoint, 1);
+
+            forwardMap = @(X) (X - obj.RTE.mapping(reshape(X, obj.RTE.nAngle, obj.RTE.nPoint))  );
+
+            [pp, ~] = gmres(forwardMap, Y, 10, 1e-12, 400);              
+
+            pp = reshape(pp, obj.RTE.nAngle, obj.RTE.nPoint);
+
+
+            S = -sigmaMT .* (sum(Wp .* wp               , 1)/ nAngle) + ...
+             sigmaS .* (sum(obj.ScatterOp(Wp) .* wp    , 1)/ nAngle) + ...
+             ETA .* XF .* IU .* IW - ...
+             sigmaXTF .* (sum(Up .* pp               , 1)/ nAngle)  + ...
+             sigmaS .* (sum(obj.ScatterOp(Up) .* pp    , 1)/ nAngle);
+                 
+            toc;
         end
 
+        
+        function [eta] = EmissionBackwardOp(obj, S, XF, Up)
+            forward = @(x) (obj.EmissionForwardOp(x', XF, Up)');
+            
+            eta = gmres(forward, S' , 10, 1e-6, 80, [], [], obj.sigma.eta');
+        end
         
     end
     

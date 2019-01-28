@@ -16,7 +16,7 @@
 
 clear;clc;
 
-boundary = @(x,y,v) (20 * cos(16 * pi * y) * (cos(16 * pi * y) > 0));%(5*(sin(4*pi * y)^2 + sin(4*pi*x)^2));
+boundary = @(x,y,v) (5*(sin(4*pi * y)^2 + sin(4*pi*x)^2));%(20 * cos(16 * pi * y) * (cos(16 * pi * y) > 0));
 h_boundary = @(x, y, v)  (1);
 
 sigma = struct(...
@@ -34,18 +34,28 @@ gamma = struct('x', 1, 'f', 1);
 opt = struct('anisotropy', 0.5, 'angle', 24, ...
     'nodes', [0 0; 1 0; 1 1; 0 1]', 'minArea', 4e-5,...
     'sigma', sigma, 'boundary', boundary, 'gamma', gamma, 'h', h_boundary, ...
-    'tau', 0.01);
+    'tau', 0.05, 'beta', 1e-3);
 
 %% construct FUMOT instance.
 ft = FUMOT(opt);
 
-
-%% initialize fluorescent coefficient at excitation wavelength.
-XF =  rand(1, ft.RTE.nPoint); % row vec.
-% XF(ft.edge) = ft.sigma.xf(ft.edge);
+% 
+% % %% initialize fluorescent coefficient at excitation wavelength.
+% XF =  rand(1, ft.RTE.nPoint); % row vec.
+% % XF(ft.edge) = ft.sigma.xf(ft.edge);
+% %%
+% [xf,hist] = ft.ExciteSolve(XF');%ft.sigma.xf');
+% 
+% figure(1);
+% ft.RTE.plot(xf)
 %%
-[xf,hist] = ft.ExciteSolve(ft.sigma.xf');
+load xf5.mat
 
-ft.RTE.plot(xf')
+[~, Up, ~] = ExciteForwardOp(ft, xf'); % column
 
+
+eta = ft.EmissionBackwardOp(ft.S, xf', Up);
+
+figure(2);
+ft.RTE.plot(eta)
 
